@@ -91,6 +91,29 @@ In any Claude Code session:
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Where Claude Code stores `projects/` transcripts |
 | `CLAUDE_INTERCOM_DIR` | `~/.claude-intercom` | Where messages are stored |
 | `CLAUDE_INTERCOM_SESSION` | _(auto)_ | Force this server's session identity (a session id) |
+| `CLAUDE_INTERCOM_RESUME_FLAGS` | _(empty)_ | Extra flags passed to `claude -p --resume` when `ask` reaches an **idle** session (e.g. `--dangerously-skip-permissions`). Empty = safe default. |
+
+## Reaching idle sessions
+
+`ask` works whether the target is live or idle. A **live** session (running in a
+tmux pane) gets the question typed into its terminal. An **idle** session — one
+whose transcript exists but isn't currently running — is resumed headlessly with
+`claude -p --resume <id>` in its own cwd, so you can still reach it; the thread
+continues in the same transcript. Set `CLAUDE_INTERCOM_RESUME_FLAGS` if those
+headless resumes need extra flags.
+
+## Hands-off pickup (optional Stop hook)
+
+`hooks/pickup-stop.mjs` is a Claude Code **Stop hook**: when a session finishes a
+turn, it pulls any unread messages addressed to that session and feeds them back
+so the session handles them (and replies) without anyone calling `read_messages`.
+Register it in `settings.json`:
+
+```json
+{ "hooks": { "Stop": [ { "hooks": [
+  { "type": "command", "command": "node /absolute/path/to/claude-intercom/hooks/pickup-stop.mjs" }
+] } ] } }
+```
 
 ## Development
 
