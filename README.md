@@ -31,16 +31,32 @@ No daemon, no database. Messages are plain JSON files under `~/.claude-intercom/
 
 ## Install
 
+### From source (recommended today)
+
 ```bash
-npm install -g claude-intercom
-# or run without installing:
-npx claude-intercom
+git clone https://github.com/AriOliv/claude-intercom
+cd claude-intercom
+npm install
+npm run build
 ```
 
-### Add to Claude Code
+Then register it with Claude Code (user scope = available in every session):
 
 ```bash
-claude mcp add intercom -- npx -y claude-intercom
+claude mcp add intercom -s user -- node "$(pwd)/dist/index.js"
+```
+
+If you run several Claude Code config dirs, register it in each:
+
+```bash
+CLAUDE_CONFIG_DIR=~/.claude     claude mcp add intercom -s user -- node "$(pwd)/dist/index.js"
+CLAUDE_CONFIG_DIR=~/.claude-ari claude mcp add intercom -s user -- node "$(pwd)/dist/index.js"
+```
+
+### Via npx (once published to npm)
+
+```bash
+claude mcp add intercom -s user -- npx -y claude-intercom
 ```
 
 Or add it to your MCP config manually:
@@ -49,8 +65,8 @@ Or add it to your MCP config manually:
 {
   "mcpServers": {
     "intercom": {
-      "command": "npx",
-      "args": ["-y", "claude-intercom"]
+      "command": "node",
+      "args": ["/absolute/path/to/claude-intercom/dist/index.js"]
     }
   }
 }
