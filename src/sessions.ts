@@ -1,7 +1,5 @@
-import { readdirSync, statSync, existsSync, createReadStream } from "node:fs";
-import { readFileSync } from "node:fs";
+import { readdirSync, statSync, existsSync, readFileSync, readlinkSync } from "node:fs";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import { run, projectsDir, extractUuid } from "./util.js";
 
 export interface SessionInfo {
@@ -136,22 +134,48 @@ function sessionIdForPid(pid: number, cmd: string): string | null {
   return openTranscriptSessionId(pid);
 }
 
-/** Find the *.jsonl transcript a claude pid currently has open (via lsof). */
+/** The working directory of a process: /proc on Linux, lsof on macOS/BSD. */
+function cwdOfPid(pid: number): string | null {
+  try {
+    return readlinkSync(`/proc/${pid}/cwd`);
+  } catch {
+    /* not Linux, or gone — fall through to lsof */
+  }
+  const out = run("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"]);
+  if (out) {
+    for (const line of out.split("\n")) {
+      if (line.startsWith("n")) return line.slice(1);
+    }
+  }
+  return null;
+}
+
+/** Claude Code's project-dir name for a cwd: every non-alphanumeric char -> '-'. */
+function projectDirFor(cwd: string): string {
+  return cwd.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
+/**
+ * Resolve the session id for a claude pid that has no --resume in argv.
+ * Claude Code (>=2.1) writes the transcript and closes the fd, so it never
+ * shows up in lsof's open files — instead we map the process's cwd to its
+ * project dir under ~/.claude/projects and take the most-recently-written
+ * transcript there.
+ */
 function openTranscriptSessionId(pid: number): string | null {
-  const lsof = run("lsof", ["-p", String(pid), "-Fn"]);
-  if (!lsof) return null;
+  const cwd = cwdOfPid(pid);
+  if (!cwd) return null;
+  const dir = join(projectsDir(), projectDirFor(cwd));
+  if (!existsSync(dir)) return null;
   let best: { sid: string; mtime: number } | null = null;
-  for (const line of lsof.split("\n")) {
-    if (!line.startsWith("n")) continue;
-    const path = line.slice(1);
-    if (!/\/projects\/.+\.jsonl$/.test(path)) continue;
-    const sid = extractUuid(path);
-    if (!sid) continue;
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith(".jsonl")) continue;
+    const sid = extractUuid(f) ?? f.replace(/\.jsonl$/, "");
     let mtime = 0;
     try {
-      mtime = statSync(path).mtimeMs;
+      mtime = statSync(join(dir, f)).mtimeMs;
     } catch {
-      /* ignore */
+      continue;
     }
     if (!best || mtime > best.mtime) best = { sid, mtime };
   }
