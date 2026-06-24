@@ -243,7 +243,30 @@ export function listSessions(opts: { scope?: "all" | "live" | "recent"; limit?: 
       transcript: path,
     });
   }
-  let filtered = out;
+  // Collapse duplicate transcripts for the same session id (a resumed session
+  // often has both an older synced transcript and a fresh one). Keep the most
+  // recently written transcript — that's where Claude is appending, so it's the
+  // right one for ask() to read — but borrow a human title/cwd from the sibling
+  // if the active one hasn't recorded a prompt yet.
+  const titled = (s: SessionInfo) => !!s.cwd && s.title !== "(no prompt yet)";
+  const bySid = new Map<string, SessionInfo>();
+  for (const s of out) {
+    const cur = bySid.get(s.session_id);
+    if (!cur) {
+      bySid.set(s.session_id, s);
+      continue;
+    }
+    const active = s.last_active_ms >= cur.last_active_ms ? s : cur;
+    const other = active === s ? cur : s;
+    const merged: SessionInfo = { ...active, live: active.live || other.live, tmux: active.tmux || other.tmux };
+    if (!titled(active) && titled(other)) {
+      merged.title = other.title;
+      merged.project = other.project;
+      merged.cwd = other.cwd;
+    }
+    bySid.set(s.session_id, merged);
+  }
+  let filtered = [...bySid.values()];
   if (project) {
     const q = project.toLowerCase();
     filtered = filtered.filter((s) => s.project.toLowerCase().includes(q) || s.cwd.toLowerCase().includes(q));
