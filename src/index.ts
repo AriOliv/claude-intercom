@@ -4,8 +4,9 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { setTimeout as sleep } from "node:timers/promises";
 import { statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { run, shortId } from "./util.js";
-import { listSessions, selfSession, findSession, assistantTextSince, type SessionInfo } from "./sessions.js";
+import { listSessions, selfSession, findSession, assistantTextSince, configDirForTranscript, type SessionInfo } from "./sessions.js";
 import { send, inbox, getMessage, markRead } from "./store.js";
 
 const server = new McpServer({ name: "claude-intercom", version: "0.1.0" });
@@ -176,7 +177,7 @@ server.tool(
 
 server.tool(
   "ask",
-  "Ask a LIVE session a question and wait for its answer. Injects the question into the target's running terminal, then reads the answer back from its transcript. Only works on sessions marked live in list_sessions. Note: this interrupts what the target is currently doing.",
+  "Ask another session a question and get its answer back — works whether the target is live or idle. If it's live, the question is typed into its running terminal and the reply is read from its transcript (this interrupts what it's doing). If it's idle, the session is resumed headlessly (claude -p --resume) so you can still reach it; the thread continues in the same transcript.",
   {
     to: z.string().describe("target session id or prefix (must be live)"),
     question: z.string().describe("the question to ask"),
@@ -197,8 +198,30 @@ server.tool(
       text: question,
     });
 
+    // Idle session: no live tmux to inject into. Drive it headlessly by
+    // resuming the transcript with `claude -p` — works whether or not the
+    // session is running, and appends to the same transcript so the thread
+    // continues. Extra flags (e.g. --dangerously-skip-permissions) come from
+    // CLAUDE_INTERCOM_RESUME_FLAGS so the tool stays safe by default.
     if (!target.live || !target.tmux) {
-      return text(`Session [${shortId(target.session_id)}] is not live, so I can't get a synchronous answer. The question was placed in its inbox (id ${shortId(msg.id)}) and it will see it on its next turn.`);
+      const cfg = configDirForTranscript(target.transcript);
+      const extra = (process.env.CLAUDE_INTERCOM_RESUME_FLAGS || "").split(/\s+/).filter(Boolean);
+      const args = ["--resume", target.session_id, "-p", question, ...extra];
+      try {
+        const out = execFileSync("claude", args, {
+          cwd: target.cwd || undefined,
+          env: cfg ? { ...process.env, CLAUDE_CONFIG_DIR: cfg } : process.env,
+          timeout: (wait_seconds ?? 90) * 1000,
+          encoding: "utf8",
+          maxBuffer: 16 * 1024 * 1024,
+          stdio: ["ignore", "pipe", "ignore"],
+        }).trim();
+        if (!out) return text(`Resumed idle session [${shortId(target.session_id)}] but it returned no text. (Question saved, id ${shortId(msg.id)}.)`);
+        const capped = out.length > 4000 ? out.slice(0, 4000) + "\n…(truncated)" : out;
+        return text(`Answer from ${target.project} [${shortId(target.session_id)}] (idle → headless resume):\n\n${capped}`);
+      } catch (e: any) {
+        return text(`Session [${shortId(target.session_id)}] is idle and the headless resume failed: ${(e?.message || String(e)).slice(0, 300)}. The question is in its inbox (id ${shortId(msg.id)}).`);
+      }
     }
 
     const sinceMs = Date.now();

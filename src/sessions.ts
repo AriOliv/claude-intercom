@@ -276,6 +276,12 @@ export function listSessions(opts: { scope?: "all" | "live" | "recent"; limit?: 
   return filtered.slice(0, limit);
 }
 
+/** The Claude config dir a transcript lives under (the part before /projects/). */
+export function configDirForTranscript(path: string): string | null {
+  const i = path.indexOf("/projects/");
+  return i === -1 ? null : path.slice(0, i);
+}
+
 export function findSession(idOrPrefix: string): SessionInfo | null {
   const all = listSessions({ scope: "all", limit: 9999 });
   return (
